@@ -1,5 +1,5 @@
 /*
- * Copyright 2015-2019 the original author or authors.
+ * Copyright 2015-2020 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,6 +17,8 @@
 package org.springframework.integration.codec.kryo;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatExceptionOfType;
+import static org.assertj.core.api.Assertions.assertThatIllegalArgumentException;
 
 import java.io.ByteArrayOutputStream;
 import java.io.File;
@@ -28,6 +30,14 @@ import java.util.Map;
 
 import org.assertj.core.data.Offset;
 import org.junit.Test;
+
+import org.springframework.integration.support.MessageBuilder;
+import org.springframework.messaging.Message;
+import org.springframework.messaging.support.GenericMessage;
+
+import com.esotericsoftware.kryo.Kryo;
+import com.esotericsoftware.kryo.KryoException;
+import com.esotericsoftware.kryo.io.Output;
 
 /**
  * @author David Turanski
@@ -66,7 +76,7 @@ public class KryoCodecTests {
 
 	@Test
 	public void testPojoSerialization() throws IOException {
-		PojoCodec codec = new PojoCodec();
+		PojoCodec codec = new PojoCodec(new KryoClassListRegistrar(SomeClassWithNoDefaultConstructors.class));
 		SomeClassWithNoDefaultConstructors foo = new SomeClassWithNoDefaultConstructors("foo", 123);
 		ByteArrayOutputStream bos = new ByteArrayOutputStream();
 		codec.encode(foo, bos);
@@ -101,7 +111,7 @@ public class KryoCodecTests {
 
 	@Test
 	public void testMapSerialization() throws IOException {
-		PojoCodec codec = new PojoCodec();
+		PojoCodec codec = new PojoCodec(new KryoClassListRegistrar(HashMap.class));
 		Map<String, Integer> map = new HashMap<>();
 		map.put("one", 1);
 		map.put("two", 2);
@@ -115,7 +125,7 @@ public class KryoCodecTests {
 
 	@Test
 	public void testComplexObjectSerialization() throws IOException {
-		PojoCodec codec = new PojoCodec();
+		PojoCodec codec = new PojoCodec(new KryoClassListRegistrar(Foo.class));
 		Foo foo = new Foo();
 		foo.put("one", 1);
 		foo.put("two", 2);
@@ -125,6 +135,87 @@ public class KryoCodecTests {
 		Foo foo2 = codec.decode(bos.toByteArray(), Foo.class);
 		assertThat(foo2.get("one")).isEqualTo(1);
 		assertThat(foo2.get("two")).isEqualTo(2);
+	}
+
+	@Test
+	public void testUnregisteredTypeIsRejectedOnDecode() {
+		byte[] bytes = encodeWithoutRegistrationRequired(null, new Gadget("touch /tmp/pwned"));
+		PojoCodec codec = new PojoCodec();
+		assertThatIllegalArgumentException()
+				.isThrownBy(() -> codec.decode(bytes, Gadget.class))
+				.withMessageContaining("Class is not registered: " + Gadget.class.getName());
+	}
+
+	@Test
+	public void testUnregisteredTypeIsRejectedOnEncode() {
+		PojoCodec codec = new PojoCodec();
+		assertThatIllegalArgumentException()
+				.isThrownBy(() -> codec.encode(new Gadget("touch /tmp/pwned")))
+				.withMessageContaining("Class is not registered: " + Gadget.class.getName());
+	}
+
+	@Test
+	public void testMessageSerialization() throws IOException {
+		MessageCodec codec = new MessageCodec();
+		Message<String> message = MessageBuilder.withPayload("foo")
+				.setHeader("bar", "baz")
+				.build();
+		Message<?> decoded = codec.decode(codec.encode(message), GenericMessage.class);
+		assertThat(decoded.getPayload()).isEqualTo("foo");
+		assertThat(decoded.getHeaders().get("bar")).isEqualTo("baz");
+	}
+
+	@Test
+	public void testMessageWithUnregisteredPayloadIsRejectedOnDecode() {
+		byte[] bytes = encodeWithoutRegistrationRequired(new MessageKryoRegistrar(),
+				new GenericMessage<>(new Gadget("touch /tmp/pwned")));
+		MessageCodec codec = new MessageCodec();
+		assertThatExceptionOfType(KryoException.class)
+				.isThrownBy(() -> codec.decode(bytes, GenericMessage.class))
+				.withMessageContaining("Class is not registered: " + Gadget.class.getName());
+	}
+
+	@Test
+	public void testMessageWithUnregisteredHeaderValueIsRejectedOnDecode() {
+		byte[] bytes = encodeWithoutRegistrationRequired(new MessageKryoRegistrar(),
+				MessageBuilder.withPayload("foo")
+						.setHeader("gadget", new Gadget("touch /tmp/pwned"))
+						.build());
+		MessageCodec codec = new MessageCodec();
+		assertThatExceptionOfType(KryoException.class)
+				.isThrownBy(() -> codec.decode(bytes, GenericMessage.class))
+				.withMessageContaining("Class is not registered: " + Gadget.class.getName());
+	}
+
+	/**
+	 * Simulate untrusted data: serialize with a {@link Kryo} instance which doesn't
+	 * require class registration, so unregistered types are written by their class names.
+	 */
+	private static byte[] encodeWithoutRegistrationRequired(KryoRegistrar registrar, Object object) {
+		Kryo kryo = new Kryo();
+		kryo.setRegistrationRequired(false);
+		if (registrar != null) {
+			registrar.registerTypes(kryo);
+		}
+		ByteArrayOutputStream bos = new ByteArrayOutputStream();
+		Output output = new Output(bos);
+		kryo.writeObject(output, object);
+		output.close();
+		return bos.toByteArray();
+	}
+
+	static class Gadget {
+
+		private String command;
+
+		Gadget(String command) {
+			this.command = command;
+		}
+
+		public String getCommand() {
+			return this.command;
+		}
+
 	}
 
 	static class SomeClassWithNoDefaultConstructors {
