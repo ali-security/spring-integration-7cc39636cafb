@@ -1,11 +1,11 @@
 dist: trusty
 language: java
-jdk: oraclejdk8
 sudo: false
-services:
-  - mongodb
-  - rabbitmq
-  - redis-server
+before_install:
+  - curl -sSfL -o /tmp/jdk8.tar.gz https://github.com/AdoptOpenJDK/openjdk8-binaries/releases/download/jdk8u232-b09/OpenJDK8U-jdk_x64_linux_hotspot_8u232b09.tar.gz
+  - mkdir -p $HOME/jdk8 && tar -xzf /tmp/jdk8.tar.gz -C $HOME/jdk8 --strip-components=1
+  - export JAVA_HOME=$HOME/jdk8 && export PATH=$JAVA_HOME/bin:$PATH
+  - java -version
 before_cache:
   - rm -f $HOME/.gradle/caches/modules-2/modules-2.lock
 cache:
@@ -14,6 +14,7 @@ cache:
     - $HOME/.gradle/wrapper/
 install: true
 env:
-  - TERM=dumb SI_FATAL_WHEN_NO_BEANFACTORY=true NO_REFERENCE_TASK=true
+  - TERM=dumb SI_FATAL_WHEN_NO_BEANFACTORY=true NO_REFERENCE_TASK=true RUN_LONG_INTEGRATION_TESTS=true
 script:
-    - ./gradlew checkAsciidocLinks check --refresh-dependencies --no-daemon
+    - ./gradlew -I .travis/test-logging.gradle :spring-integration-core:jar :spring-integration-core:test --refresh-dependencies --no-daemon --console=plain
+    - python3 .travis/test-report.py spring-integration-core

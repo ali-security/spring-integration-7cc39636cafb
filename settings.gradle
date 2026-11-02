@@ -1,3 +1,11 @@
+pluginManagement {
+	repositories {
+		gradlePluginPortal()
+		// org.ysb33r.gradle:grolifant:0.10 (asciidoctor plugin dependency) was only on JCenter
+		maven { url 'https://repo.gradle.org/gradle/libs-releases' }
+	}
+}
+
 rootProject.name = 'spring-integration'
 
 rootDir.eachDir { dir ->
